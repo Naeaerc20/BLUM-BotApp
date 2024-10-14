@@ -44,20 +44,22 @@ function saveJSON(filePath, data) {
     fs.writeFileSync(filePath, JSON.stringify(data, null, 2), 'utf-8');
 }
 
-async function initializeBearers(queryIds, bearers) {
+async function initializeBearers(queryIds) {
+    const bearers = [];
     for (let i = 0; i < queryIds.length; i++) {
         const queryId = queryIds[i];
-        if (!bearers[i]) {
-            try {
-                const bearer = await getBearerToken(queryId);
-                bearers[i] = bearer;
-            } catch (error) {
-                console.log(`🚨 Error obteniendo Bearer para Query ID ${queryId}: ${error.message}`.red);
-                bearers[i] = null;
-            }
+        try {
+            const bearer = await getBearerToken(queryId);
+            bearers[i] = bearer;
+            // Bearer tokens are stored in the array
+        } catch (error) {
+            bearers[i] = null;
         }
+        // Wait 500ms between each bearer generation
+        await new Promise(resolve => setTimeout(resolve, 500));
     }
     saveJSON(BEARER_FILE, bearers);
+    return bearers;
 }
 
 async function refreshBearer(queryId) {
@@ -72,7 +74,7 @@ async function refreshBearer(queryId) {
 async function getUserData(bearer) {
     let username = 'N/A';
     let balance = 'N/A';
-    let tribu = 'N/A';
+    let tribe = 'N/A';
     let playChances = 'N/A';
     let walletConnected = 'N/A';
 
@@ -88,7 +90,7 @@ async function getUserData(bearer) {
     } catch {}
 
     try {
-        tribu = await getTribeInfo(bearer);
+        tribe = await getTribeInfo(bearer);
     } catch {}
 
     try {
@@ -99,7 +101,7 @@ async function getUserData(bearer) {
     return {
         username,
         balance,
-        tribu,
+        tribe,
         playChances,
         walletConnected
     };
@@ -107,7 +109,7 @@ async function getUserData(bearer) {
 
 function displayTable(dataArray) {
     const table = new Table({
-        head: ['ID', 'USERNAME', 'BALANCE', 'TRIBU', 'PLAY CHANCES', 'WALLET CONNECTED'],
+        head: ['ID', 'USERNAME', 'BALANCE', 'TRIBE', 'PLAY CHANCES', 'WALLET CONNECTED'],
         colWidths: [5, 20, 15, 20, 15, 20]
     });
 
@@ -116,7 +118,7 @@ function displayTable(dataArray) {
             index + 1,
             data.username,
             data.balance,
-            data.tribu,
+            data.tribe,
             data.playChances,
             data.walletConnected
         ]);
@@ -143,7 +145,10 @@ async function performCheckInAction(username, bearer) {
         const reward = await performCheckIn(bearer);
         if (reward) {
             console.log(`✅ Daily reward claimed successfully for ${username}`.green);
-            console.log(`${username} Performed Check-In for ${reward.ordinal} consecutive Days and Obtained ${reward.reward.passes} Play Chances & ${reward.reward.points} BP Points`.green);
+            // Handle potential undefined properties to avoid errors
+            const passes = (reward.reward && reward.reward.passes !== undefined) ? reward.reward.passes : 0;
+            const points = (reward.reward && reward.reward.points !== undefined) ? reward.reward.points : 0;
+            console.log(`${username} Performed Check-In successfully`.green);
         }
     } catch (error) {
         if (error.message === 'same day') {
@@ -164,7 +169,7 @@ async function claimFarmingAction(username, bearer) {
         }
     } catch (error) {
         if (error.message.includes('Error 425') || error.message.includes('Error 400')) {
-            console.log(`🚨 Error Starting Farming for ${username} - It's too early to claim`.red);
+            console.log(`🚨 Error Claiming Farming Rewards for ${username} - It's too early to claim`.red);
         } else {
             console.log(`🚨 Failed to claim Farming Rewards for ${username}`.red);
             console.log(error.message);
@@ -228,7 +233,7 @@ async function autoCompleteTasksAction(username, bearer) {
                 }
             } catch (error) {
                 if (error.message.includes('400') || error.message.includes('412')) {
-                    console.log(`🚨 Task "${task.title}" can't be completed manually please complete it manually`.red);
+                    console.log(`🚨 Task "${task.title}" can't be completed automatically, please complete it manually`.red);
                 } else {
                     console.log(`🚨 Failed to complete Task "${task.title}" for ${username}`.red);
                     console.log(error.message);
@@ -256,6 +261,7 @@ async function completeManualTasksAction(username, bearers) {
         const tasksData = await getTasks(bearers[0]);
         const keywordTasksMap = new Map();
 
+        // Filter tasks that require KEYWORD and ensure uniqueness
         tasksData.forEach(section => {
             if (section.tasks) {
                 section.tasks.forEach(task => {
@@ -483,37 +489,37 @@ async function executeActionForAll(action, accounts) {
             for (let account of accounts) {
                 if (!account.bearer) continue;
                 await performCheckInAction(account.username, account.bearer);
-                await new Promise(resolve => setTimeout(resolve, 900));
+                await new Promise(resolve => setTimeout(resolve, 500));
             }
             break;
         case '2':
             for (let account of accounts) {
                 if (!account.bearer) continue;
                 await claimFarmingAction(account.username, account.bearer);
-                await new Promise(resolve => setTimeout(resolve, 900));
+                await new Promise(resolve => setTimeout(resolve, 500));
             }
             break;
         case '3':
             for (let account of accounts) {
                 if (!account.bearer) continue;
                 await startFarmingAction(account.username, account.bearer);
-                await new Promise(resolve => setTimeout(resolve, 900));
+                await new Promise(resolve => setTimeout(resolve, 500));
             }
             break;
         case '4':
             for (let account of accounts) {
                 if (!account.bearer) continue;
                 await autoCompleteTasksAction(account.username, account.bearer);
-                await new Promise(resolve => setTimeout(resolve, 900));
+                await new Promise(resolve => setTimeout(resolve, 500));
             }
             break;
         case '5':
             const bearers = accounts.map(account => account.bearer).filter(bearer => bearer !== null);
             if (bearers.length === 0) {
-                console.log('🚨 No bearers disponibles para completar tareas manuales.'.red);
+                console.log('🚨 No bearers available to complete manual tasks.'.red);
                 break;
             }
-            await completeManualTasksAction(accounts[0].username, bearers);
+            await completeManualTasksAction(null, bearers);
             break;
         case '6':
             console.log('ℹ️ Play Games feature is coming soon.'.magenta);
@@ -522,143 +528,145 @@ async function executeActionForAll(action, accounts) {
             for (let account of accounts) {
                 if (!account.bearer) continue;
                 await claimReferralRewardsOption(account.username, account.bearer);
-                await new Promise(resolve => setTimeout(resolve, 900));
+                await new Promise(resolve => setTimeout(resolve, 500));
             }
             break;
         default:
             console.log('🚨 Invalid option. Please try again.'.red);
     }
 
-    // Esperar a que el usuario presione Enter para volver al menú
+    // Wait 300ms before showing the main menu again
+    await new Promise(resolve => setTimeout(resolve, 300));
     readline.question('Press Enter to see main menu again...'.yellow);
 }
 
 (async () => {
-    consoleClear();
-    console.log(figlet.textSync('BLUM BOT', { horizontalLayout: 'default', verticalLayout: 'default' }).green);
-    console.log(`
-👋 Hello! Welcome to the Blum AutoFarming Bot
-👑 Created by Naeaex - x.com/naeaex_dev - github.com/Naeaerc20
-⏳ We're fetching your data... Please wait
-    `.green);
-
-    let bearers = loadJSON(BEARER_FILE);
-    const queryIds = loadJSON(QUERY_IDS_FILE);
-
-    if (queryIds.length === 0) {
-        console.log('🚨 No Query IDs found. Please ensure query_ids.json is populated.'.red);
-        process.exit(1);
-    }
-
-    if (bearers.length !== queryIds.length) {
-        await initializeBearers(queryIds, bearers);
-        bearers = loadJSON(BEARER_FILE);
-    }
-
-    // Obtener datos de todas las cuentas
-    const accounts = [];
-    for (let i = 0; i < queryIds.length; i++) {
-        const bearer = bearers[i];
-        if (bearer) {
-            const userData = await getUserData(bearer);
-            accounts.push({
-                username: userData.username,
-                balance: userData.balance,
-                tribu: userData.tribu,
-                playChances: userData.playChances,
-                walletConnected: userData.walletConnected,
-                bearer
-            });
-        } else {
-            accounts.push({
-                username: 'N/A',
-                balance: 'N/A',
-                tribu: 'N/A',
-                playChances: 'N/A',
-                walletConnected: 'N/A',
-                bearer: null
-            });
-        }
-    }
-
-    displayTable(accounts.map(account => ({
-        username: account.username,
-        balance: account.balance,
-        tribu: account.tribu,
-        playChances: account.playChances,
-        walletConnected: account.walletConnected
-    })));
-
-    let exit = false;
-    while (!exit) {
-        displayMenu();
-        const choice = readline.question('Select an option: '.yellow).trim();
-
-        if (choice === '8') {
-            exit = true;
-            break;
-        }
-
-        if (!['1', '2', '3', '4', '5', '6', '7'].includes(choice)) {
-            console.log('🚨 Invalid option. Please try again.'.red);
-            continue;
-        }
-
-        await executeActionForAll(choice, accounts);
-
-        // Actualizar los datos de todas las cuentas después de realizar la acción
-        for (let i = 0; i < queryIds.length; i++) {
-            const bearer = accounts[i].bearer;
-            if (bearer) {
-                const userData = await getUserData(bearer);
-                accounts[i].username = userData.username;
-                accounts[i].balance = userData.balance;
-                accounts[i].tribu = userData.tribu;
-                accounts[i].playChances = userData.playChances;
-                accounts[i].walletConnected = userData.walletConnected;
-            }
-        }
-
-        // Rotar los bearers con una demora de 900ms entre cada rotación
-        for (let i = 0; i < queryIds.length; i++) {
-            const queryId = queryIds[i];
-            const newBearer = await refreshBearer(queryId);
-            if (newBearer) {
-                bearers[i] = newBearer;
-                accounts[i].bearer = newBearer;
-                saveJSON(BEARER_FILE, bearers);
-
-                // Actualizar los datos de la cuenta con el nuevo bearer
-                const userData = await getUserData(newBearer);
-                accounts[i].username = userData.username;
-                accounts[i].balance = userData.balance;
-                accounts[i].tribu = userData.tribu;
-                accounts[i].playChances = userData.playChances;
-                accounts[i].walletConnected = userData.walletConnected;
-            }
-            // Esperar 900ms antes de la siguiente rotación
-            if (i < queryIds.length - 1) {
-                await new Promise(resolve => setTimeout(resolve, 900));
-            }
-        }
-
-        // Limpiar la consola y mostrar la tabla actualizada
+    try {
         consoleClear();
         console.log(figlet.textSync('BLUM BOT', { horizontalLayout: 'default', verticalLayout: 'default' }).green);
         console.log(`
 👋 Hello! Welcome to the Blum AutoFarming Bot
 👑 Created by Naeaex - x.com/naeaex_dev - github.com/Naeaerc20
-⏳ We're fetching your data... Please wait
-    `.green);
+⏳ We're generating Bearer tokens... Please wait
+        `.green);
+
+        const queryIds = loadJSON(QUERY_IDS_FILE);
+
+        if (queryIds.length === 0) {
+            console.log('🚨 No Query IDs found. Please ensure query_ids.json is populated.'.red);
+            process.exit(1);
+        }
+
+        // Generate new Bearer tokens for all accounts
+        let bearers = await initializeBearers(queryIds);
+
+        // Obtain data for all accounts
+        const accounts = [];
+        for (let i = 0; i < queryIds.length; i++) {
+            const bearer = bearers[i];
+            if (bearer) {
+                const userData = await getUserData(bearer);
+                accounts.push({
+                    username: userData.username,
+                    balance: userData.balance,
+                    tribe: userData.tribe,
+                    playChances: userData.playChances,
+                    walletConnected: userData.walletConnected,
+                    bearer
+                });
+            } else {
+                accounts.push({
+                    username: 'N/A',
+                    balance: 'N/A',
+                    tribe: 'N/A',
+                    playChances: 'N/A',
+                    walletConnected: 'N/A',
+                    bearer: null
+                });
+            }
+        }
 
         displayTable(accounts.map(account => ({
             username: account.username,
             balance: account.balance,
-            tribu: account.tribu,
+            tribe: account.tribe,
             playChances: account.playChances,
             walletConnected: account.walletConnected
         })));
-    }
 
-    console.log('✅ All accounts have been processed.'.green);
+        let exit = false;
+        while (!exit) {
+            displayMenu();
+            const choice = readline.question('Select an option: '.yellow).trim();
+
+            if (choice === '8') {
+                exit = true;
+                break;
+            }
+
+            if (!['1', '2', '3', '4', '5', '6', '7'].includes(choice)) {
+                console.log('🚨 Invalid option. Please try again.'.red);
+                continue;
+            }
+
+            await executeActionForAll(choice, accounts);
+
+            // Update data for all accounts after performing actions
+            for (let i = 0; i < queryIds.length; i++) {
+                const bearer = accounts[i].bearer;
+                if (bearer) {
+                    const userData = await getUserData(bearer);
+                    accounts[i].username = userData.username;
+                    accounts[i].balance = userData.balance;
+                    accounts[i].tribe = userData.tribe;
+                    accounts[i].playChances = userData.playChances;
+                    accounts[i].walletConnected = userData.walletConnected;
+                }
+            }
+
+            // Rotate bearers with a delay of 500ms between each rotation
+            for (let i = 0; i < queryIds.length; i++) {
+                const queryId = queryIds[i];
+                const newBearer = await refreshBearer(queryId);
+                if (newBearer) {
+                    bearers[i] = newBearer;
+                    accounts[i].bearer = newBearer;
+                    saveJSON(BEARER_FILE, bearers);
+
+                    // Update account data with the new bearer
+                    const userData = await getUserData(newBearer);
+                    accounts[i].username = userData.username;
+                    accounts[i].balance = userData.balance;
+                    accounts[i].tribe = userData.tribe;
+                    accounts[i].playChances = userData.playChances;
+                    accounts[i].walletConnected = userData.walletConnected;
+                }
+                // Wait 500ms before the next rotation
+                if (i < queryIds.length - 1) {
+                    await new Promise(resolve => setTimeout(resolve, 500));
+                }
+            }
+
+            // Clear the console and display the updated table
+            consoleClear();
+            console.log(figlet.textSync('BLUM BOT', { horizontalLayout: 'default', verticalLayout: 'default' }).green);
+            console.log(`
+👋 Hello! Welcome to the Blum AutoFarming Bot
+👑 Created by Naeaex - x.com/naeaex_dev - github.com/Naeaerc20
+⏳ We're fetching your data... Please wait
+            `.green);
+
+            displayTable(accounts.map(account => ({
+                username: account.username,
+                balance: account.balance,
+                tribe: account.tribe,
+                playChances: account.playChances,
+                walletConnected: account.walletConnected
+            })));
+        }
+
+        console.log('✅ All accounts have been processed.'.green);
+    } catch (error) {
+        console.log(`🚨 An unexpected error occurred: ${error.message}`.red);
+    }
 })();
